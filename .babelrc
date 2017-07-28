@@ -1,0 +1,6 @@
+{
+	"presets": ["stage-1"],
+  "plugins": [
+    "babel-plugin-transform-decorators-legacy"
+  ]
+}
