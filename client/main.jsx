@@ -26,7 +26,7 @@ function sensorMapper(props, onData) {
 
 class Sensor extends React.Component {
 
-	state = { value: null, busy: false, message: '' }
+	state = { value: null, busy: false, message: '', newAddress: null }
 
 	handleReadCO2Click = async () => {
 		this.setState({ busy: true });
@@ -40,6 +40,20 @@ class Sensor extends React.Component {
 		}
 	}
 
+	handleChangeAddressInputChange = (event) => {
+		const value = event.target.value;
+		this.setState({ newAddress: parseInt(value, 10) });
+	}
+
+	handleChangeAddressClick = async () => {
+		const newAddress = this.state.newAddress;
+		if (!Number.isInteger(newAddress) || newAddress < 1 || newAddress > 253) {
+			console.error('invalid address');
+		} else {
+			await promisifyCall(Meteor.call, `changeAddress`, this.props.address, newAddress);
+		}
+	}
+
 	render() {
 		const { address } = this.props;
 		const { value, busy, message } = this.state;
@@ -49,10 +63,11 @@ class Sensor extends React.Component {
 		return (
 			<tr>
 				<td>{ address } / { address.toString(16).toUpperCase() }</td>
-				 <td>{ lastReading.value }</td>
-				 <td>{ lastReading.timestamp }</td>
+				<td>{ lastReading.value }</td>
+				<td>{ lastReading.timestamp }</td>
 				<td>{ message }</td>
 				<td><button onClick={this.handleReadCO2Click}>Read CO<sub>2</sub></button></td>
+				<td><input onChange={this.handleChangeAddressInputChange}/><button onClick={this.handleChangeAddressClick}>Change address</button></td>
 			</tr>
 		);
 	}
@@ -66,7 +81,7 @@ class PortComponent extends React.Component {
 	handleScanSensorClick = async () => {
 		this.setState({ message: 'scanning' });
 		try {
-			const result = await promisifyCall(Meteor.call, `test1`);
+			const result = await promisifyCall(Meteor.call, `startScan`);
 			console.log(result);
 			this.setState({
 				message: 'scan ended'
@@ -121,6 +136,10 @@ class PortComponent extends React.Component {
 		this.setState({ addresses: event.target.value });
 	}
 
+	handleResetAllClick = async () => {
+		await promisifyCall(Meteor.call, `resetAll`);
+	}
+
 	render() {
 		const { portName, ready, sensors } = this.props;
 		const { isScanning, message } = this.state;
@@ -136,6 +155,8 @@ class PortComponent extends React.Component {
 				<button onClick={this.handleReadCO2AllClick}>Read All CO2</button>
 				<br/>
 				<input name="addresses" onChange={this.handleAddressesChange}/>
+				<br/>
+				<button onClick={this.handleResetAllClick}>Reset all</button>
 				<br/>
 				<table>
 					<thead>

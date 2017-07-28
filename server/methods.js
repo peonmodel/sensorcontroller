@@ -73,6 +73,19 @@ Meteor.methods({
   },
   readCO2(address) {
     const sensor = currentSensor.sensors.find(o => o.address === address);
-    return sensor.readCO2;
+    return sensor.readCO2();
   },
+  startScan: async function startScan(options = {}) {
+    return currentSensorPort.startScan(options);
+  },
+  endScan() {
+    return currentSensorPort.endScan();
+  },
+  resetAll: async function resetAll() {
+    return await currentSensorPort.resetAll();
+  },
+  changeAddress: async function changeAddress(address, newAddress) {
+    const sensor = currentSensor.sensors.find(o => o.address === address);
+    return sensor.changeAddress(newAddress);
+  }
 });
