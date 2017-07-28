@@ -7,6 +7,7 @@ import lodash from 'lodash';
 
 const DEFAULT_ADDRESS = 104;
 const PUBLIC_ADDRESS = 254;
+const CALIBRATION_ACK = 32;
 
 const Utils = {
 	removeLast2(buffer) {
@@ -82,7 +83,45 @@ const PROTOCOLS = {
 			isExpected: (response) => { return Utils.isValidCRC(response, sequence); },
 		};
 	},
-	// generatePing(address) {}
+	generateClearAcknowledgementRegister(address) {
+		const sensorAddress = address.toString(16);
+		const fnCode = '06';
+		const	registerAddress = '0000';
+		const	registerQuantity = '0000';
+		let sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}`, 'hex');
+		const crc = Utils.calculateCRC(sequence);
+		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${crc}`, 'hex');
+		return {
+			sequence,
+			isExpected: (response) => { return Utils.isEcho(response, sequence); },
+		};
+	},
+	generateReadAcknowledgementRegister(address) {
+		const sensorAddress = address.toString(16);
+		const fnCode = '03';
+		const	registerAddress = '0000';
+		const	registerQuantity = '0001';
+		let sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}`, 'hex');
+		const crc = Utils.calculateCRC(sequence);
+		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${crc}`, 'hex');
+		return {
+			sequence,
+			isExpected: (response) => { return Utils.isValidCRC(response); },
+		};
+	},
+	generateBackgroundCalibration(address, value) {
+		// const sensorAddress = address.toString(16);
+		// const fnCode = '06';
+		// const	registerAddress = '001f';
+		// const	registerQuantity = value.toString(16);
+		// let sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}`, 'hex');
+		// const crc = Utils.calculateCRC(sequence);
+		// sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${crc}`, 'hex');
+		// return {
+		// 	sequence,
+		// 	isExpected: (response) => { return Utils.isEcho(response, sequence); },
+		// };
+	},
 };
 
 export class Sensor {
@@ -118,6 +157,24 @@ export class Sensor {
 		Sensor.readingCollection.insertOne({ _id: Random.id(), address: this.address, reading: parsedData, timestamp: new Date() });
 		return { result, data, parsedData };
 	}
+
+	async readAcknowledgementRegister() {
+		const { sequence, isExpected } = PROTOCOLS.generateReadAcknowledgementRegister(this.address);
+		const { result, data } = await this.parent.send(sequence);
+		if (!isExpected(data)) { return null; }
+		const parsedData = Utils.parseData(data) === CALIBRATION_ACK;
+		// no need to await the below promise
+		return { result, data, parsedData };
+	}
+
+	async clearAcknowledgementRegister() {
+		const { sequence, isExpected } = PROTOCOLS.generateClearAcknowledgementRegister(this.address);
+		const { result, data } = await this.parent.send(sequence);
+		if (!isExpected(data)) { return null; }
+		return true;
+	}
+
+	async calibrateBackground() {}
 
 	async ping() {
 		return this.readCO2();
@@ -378,10 +435,11 @@ export class SensorPort {
 	async resetAll() {
 		this.busy = true;
 		for (const sensor of this.sensors) {
-			await sensor.changeAddress(DEFAULT_ADDRESS)
+			const result = await sensor.changeAddress(DEFAULT_ADDRESS);
+			if (result) { sensor.remove  = true; }  // mark for remove
 		}
-		this.sensors = [];
-		await Sensor.collection.deleteMany({});
+		this.sensors = this.sensors.filter(o => !o.remove);  // keep those that are not marked removed
+		await Sensor.collection.deleteMany({ address: DEFAULT_ADDRESS });
 		this.busy = false;
 	}
 }
