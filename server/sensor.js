@@ -8,10 +8,12 @@ import lodash from 'lodash';
 const DEFAULT_ADDRESS = 104;
 const PUBLIC_ADDRESS = 254;
 const CALIBRATION_ACK = 32;
+const RETRIAL_ATTEMPTS = 10;  // flush/drain each time
+const RESPONSE_TIMEOUT = 300;
 
 const Utils = {
 	removeLast2(buffer) {
-		return buffer.slice(0, buffer.length -2);
+		return buffer.slice(0, buffer.length - 2);
 	},
 	calculateCRC(buffer) {
 		const [b1, b2, a1, a2] = crc.crc16modbus(buffer).toString(16).padStart(4, '0');
@@ -123,7 +125,7 @@ const PROTOCOLS = {
 		// };
 	},
 };
-
+// 105,106,107,108,109,110,111,112
 export class Sensor {
 	constructor(item, parent) {
 		Object.assign(this, item);
@@ -132,10 +134,6 @@ export class Sensor {
 	}
 
 	parent = null
-
-	get portName() {
-		return this.parent.portName;
-	}
 
 	async changeAddress(newAddress) {
 		const { sequence, isExpected } = PROTOCOLS.generateChangeAddress(this.address, newAddress);
@@ -147,14 +145,27 @@ export class Sensor {
 		return newAddress;
 	}
 
+	async retrial(sequence, isExpected, limit = RETRIAL_ATTEMPTS) {
+		let attemptCount = 0;
+		do {
+			const { result, data } = await this.parent.send(sequence);
+			await this.parent.flush();
+			if (isExpected(data)) { return { result, data }; }
+		} while (attempts <= RETRIAL_ATTEMPTS);
+		return null;
+	}
+
 	async readCO2() {
 		const { sequence, isExpected } = PROTOCOLS.generateReadCO2(this.address);
-		const { result, data } = await this.parent.send(sequence);
-		console.log('readCO2', this.address, data)
-		if (!isExpected(data)) { return null; }
+		const obj = await this.retrial(sequence, isExpected);
+		if (!obj) {
+			Sensor.readingCollection.insertOne({ _id: Random.id(), portName: this.portName, address: this.address, value: null, timestamp: new Date() });
+			return null;
+		}
+		const { result, data } = obj;
 		const parsedData = Utils.parseData(data);
 		// no need to await the below promise
-		Sensor.readingCollection.insertOne({ _id: Random.id(), address: this.address, reading: parsedData, timestamp: new Date() });
+		Sensor.readingCollection.insertOne({ _id: Random.id(), portName: this.portName, address: this.address, value: parsedData, timestamp: new Date() });
 		return { result, data, parsedData };
 	}
 
@@ -215,7 +226,6 @@ export class SensorPort {
 	}
 
 	responseCallbacks = {}
-	responseTimeout = 1000
 	awaitingResponse = false
 	busy = false
 	shouldScan = false
@@ -247,7 +257,7 @@ export class SensorPort {
 		});
 	}
 
-	async wait(timeout = this.responseTimeout) {
+	async wait(timeout = RESPONSE_TIMEOUT) {
 		return new Promise(resolve => {
 			setTimeout(resolve, timeout, { result: 'timedout' });
 		});
@@ -359,29 +369,25 @@ export class SensorPort {
 	async registerSensor(address) {
 		// check that sensor is not already in array
 		let sensor = this.sensors.find(o => o.address === address);
-		if (sensor) { return null; }
+		if (sensor) { return null; }  // dont repeat
 		// pings address to verify presence
-		console.log('pinging', address)
 		const response = await this.ping(address);
 		if (!response) { return null; }
-		await Sensor.collection.insertOne({ _id: Random.id(), address });
+		await Sensor.collection.insertOne({ _id: Random.id(), portName: this.portName, address });
 		sensor = await Sensor.collection.findOne({ address });
 		sensor = new Sensor(sensor, this);
 		sensor && this.sensors.push(sensor);
 		return sensor;
 	}
 
-
-
 	// register sensors of address
 	async registerSensors(addresses) {
 		const array = [];
-		console.log('registerSensors, here')
 		for (const address of addresses) {
 			const sensor = await this.registerSensor(address);
+			console.log('registerSensors', sensor)
 			array.push(sensor)
 		}
-		await this.flush();
 		return array;
 	}
 

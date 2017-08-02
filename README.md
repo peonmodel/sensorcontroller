@@ -1,5 +1,9 @@
 # Package for controlling sensor
 
+- scan continuously & stop
+- retrial
+- show registered sensors with no readings
+
 ## Specifications
 - have a list of available ports
 - invalid ports, ports that are not sensors are filtered away

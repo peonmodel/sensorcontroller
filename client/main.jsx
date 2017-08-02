@@ -5,22 +5,49 @@ import { render } from 'react-dom';
 import reactify from '../imports/reactive-decorator.js';
 import promisifyCall from '../imports/promisifycall.js';
 import _ from 'lodash';
+import moment from 'moment';
 
 const DEFAULT_STRING = ''.padEnd(40, '-');
 const DEFAULT_OPTION = { comName: DEFAULT_STRING };
 const Sensors = new Mongo.Collection('sensors');
+window.Sensors = Sensors;
 const Readings = new Mongo.Collection('readings');
+window.Readings = Readings;
+window.moment = moment
 
 function sensorMapper(props, onData) {
-	console.log(props)
 	const activeSub = Meteor.subscribe('sensors');
 	if (activeSub.ready()) {
 		onData(null, {
 			ready: true,
-			sensors: Sensors.find({ portName: props.portName }).fetch()
+			sensors: Sensors.find({ portName: props.portName }),
 		});
 	} else {
 		onData(null, { ready: false });
+	}
+}
+
+class LiveStamp extends React.PureComponent {
+	state = { time }
+	constructor(props) {
+		super(props);
+		this.timerId = setInterval(() => {
+			this.updateTime();
+		}, 1000);
+	}
+	componentWillUnmount() {
+		clearInterval(this.timerId);
+	}
+	componentWillReceiveProps(nextProps) {
+		this.updateTime();
+	}
+	updateTime = () => {
+		this.setState({ time: moment(this.props.timestamp).fromNow() });
+	}
+	render() {
+		return (
+			<span>{this.state.time}</span>
+		);
 	}
 }
 
@@ -57,14 +84,13 @@ class Sensor extends React.Component {
 	render() {
 		const { address } = this.props;
 		const { value, busy, message } = this.state;
-		const readings = Readings.find({ address }, { $sort: { timestamp: -1 } }).fetch();
-		console.log(readings)
+		const readings = Readings.find({ address }, { sort: { timestamp: -1 } }).fetch();
 		const lastReading = readings[0] || {};
 		return (
 			<tr>
 				<td>{ address } / { address.toString(16).toUpperCase() }</td>
 				<td>{ lastReading.value }</td>
-				<td>{ lastReading.timestamp }</td>
+				<td><LiveStamp timestamp={lastReading.timestamp}/></td>
 				<td>{ message }</td>
 				<td><button onClick={this.handleReadCO2Click}>Read CO<sub>2</sub></button></td>
 				<td><input onChange={this.handleChangeAddressInputChange}/><button onClick={this.handleChangeAddressClick}>Change address</button></td>
@@ -107,7 +133,7 @@ class PortComponent extends React.Component {
 		const addresses = this.state.addresses.split(',').map(o => parseInt(o, 10));
 		try {
 			const result = await promisifyCall(Meteor.call, `registerSensors`, addresses);
-			console.log(result);
+			console.log('registerSensors', result);
 			this.setState({
 				message: 'registration ended'
 			});
@@ -144,6 +170,7 @@ class PortComponent extends React.Component {
 		const { portName, ready, sensors } = this.props;
 		const { isScanning, message } = this.state;
 		if (!ready) { return (<div>Not ready</div>); }
+		console.log(sensors.fetch())
 		return (
 			<div>
 				<br/>
@@ -169,7 +196,7 @@ class PortComponent extends React.Component {
 						</tr>
 					</thead>
 					<tbody>
-						{sensors.map((o, idx) => {
+						{sensors.fetch().map((o, idx) => {
 							return (<Sensor key={idx} {...o} />);
 						})}
 					</tbody>
@@ -188,7 +215,6 @@ class App extends React.Component {
 		this.setState({ busy: true, message: '' });
 		try {
 			const ports = await promisifyCall(Meteor.call, `listPorts`);
-			console.log(ports);
 			this.setState({
 				availablePorts: [DEFAULT_OPTION, ...ports],
 				message: 'listed ports'
