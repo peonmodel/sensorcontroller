@@ -14,6 +14,8 @@ window.Sensors = Sensors;
 const Readings = new Mongo.Collection('readings');
 window.Readings = Readings;
 window.moment = moment
+moment.relativeTimeThreshold('ss', 1);
+moment.relativeTimeThreshold('s', 60);
 
 function sensorMapper(props, onData) {
 	const activeSub = Meteor.subscribe('sensors');
@@ -28,7 +30,7 @@ function sensorMapper(props, onData) {
 }
 
 class LiveStamp extends React.PureComponent {
-	state = { time }
+	state = { time: null }
 	constructor(props) {
 		super(props);
 		this.timerId = setInterval(() => {
@@ -42,7 +44,10 @@ class LiveStamp extends React.PureComponent {
 		this.updateTime();
 	}
 	updateTime = () => {
-		this.setState({ time: moment(this.props.timestamp).fromNow() });
+		const newStamp = moment(this.props.timestamp).fromNow();
+		if (newStamp !== this.state.time) {
+			this.setState({ time: newStamp });
+		}
 	}
 	render() {
 		return (
@@ -288,6 +293,7 @@ class App extends React.Component {
 						);
 					})}
 				</select>
+				<LiveStamp timestamp={new Date()}/>
 				<button disabled={busy} name="openport" onClick={this.handleOpenPortClick}>Open Port</button>
 				<button disabled={busy} name="closeport" onClick={this.handleClosePortClick}>Close Port</button>
 				<PortComponent portName={selectedPort}/>
