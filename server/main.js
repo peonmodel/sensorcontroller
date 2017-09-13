@@ -10,10 +10,13 @@ import './publications.js';
 
 // let currentPort = null;
 
+Meteor.Sensor = Sensor;
+Meteor.SensorPort = SensorPort;
+
 Meteor.startup(() => {
-  Sensor.collection.remove({});
-  Sensor.readingCollection.remove({});
-  // code to run on server at startup
+	Sensor.collection.remove({});
+	Sensor.readingCollection.remove({});
+	// code to run on server at startup
 });
 
 // const serialPort = new SerialPort.SerialPort('/dev/cu.usbserial', {
