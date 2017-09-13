@@ -13,20 +13,27 @@ const Sensors = new Mongo.Collection('sensors');
 window.Sensors = Sensors;
 const Readings = new Mongo.Collection('readings');
 window.Readings = Readings;
-window.moment = moment
 moment.relativeTimeThreshold('ss', 1);
 moment.relativeTimeThreshold('s', 60);
 
 function sensorMapper(props, onData) {
 	const activeSub = Meteor.subscribe('sensors');
 	if (activeSub.ready()) {
+		console.log('sub ready')
 		onData(null, {
 			ready: true,
-			sensors: Sensors.find({ portName: props.portName }),
+			sensors: Sensors.find({ portName: props.portName }).fetch(),
 		});
 	} else {
 		onData(null, { ready: false });
 	}
+}
+
+function readingMapper(props, onData) {
+	onData(null, {
+		ready: true,
+		readings: Readings.find({ address: props.address }, { sort: { timestamp: -1 } }).fetch(),
+	});
 }
 
 class LiveStamp extends React.PureComponent {
@@ -40,7 +47,7 @@ class LiveStamp extends React.PureComponent {
 	componentWillUnmount() {
 		clearInterval(this.timerId);
 	}
-	componentWillReceiveProps(nextProps) {
+	componentWillReceiveProps() {
 		this.updateTime();
 	}
 	updateTime = () => {
@@ -56,6 +63,7 @@ class LiveStamp extends React.PureComponent {
 	}
 }
 
+@reactify(readingMapper)
 class Sensor extends React.Component {
 
 	state = { value: null, busy: false, message: '', newAddress: null }
@@ -87,9 +95,9 @@ class Sensor extends React.Component {
 	}
 
 	render() {
-		const { address } = this.props;
+		const { address, readings } = this.props;
 		const { value, busy, message } = this.state;
-		const readings = Readings.find({ address }, { sort: { timestamp: -1 } }).fetch();
+		// const readings = Readings.find({ address }, { sort: { timestamp: -1 } });
 		const lastReading = readings[0] || {};
 		return (
 			<tr>
@@ -113,7 +121,7 @@ class PortComponent extends React.Component {
 		this.setState({ message: 'scanning' });
 		try {
 			const result = await promisifyCall(Meteor.call, `startScan`);
-			console.log(result);
+			console.log('handleScanSensorClick', result);
 			this.setState({
 				message: 'scan ended'
 			});
@@ -126,7 +134,7 @@ class PortComponent extends React.Component {
 	handleEndScanClick = async () => {
 		try {
 			const result = await promisifyCall(Meteor.call, `test2`);
-			console.log(result);
+			console.log('handleEndScanClick', result);
 		} catch (error) {
 			console.log(error);
 			this.setState({ message: error.message || error.error || error });
@@ -138,7 +146,7 @@ class PortComponent extends React.Component {
 		const addresses = this.state.addresses.split(',').map(o => parseInt(o, 10));
 		try {
 			const result = await promisifyCall(Meteor.call, `registerSensors`, addresses);
-			console.log('registerSensors', result);
+			console.log('handleRegisterSensorsClick', result);
 			this.setState({
 				message: 'registration ended'
 			});
@@ -154,9 +162,33 @@ class PortComponent extends React.Component {
 		this.setState({ busy: true });
 		try {
 			const result = await promisifyCall(Meteor.call, `readCO2All`);
-			console.log(result);
+			console.log('handleReadCO2AllClick', result);
 		} catch (error) {
 			console.log(error);
+			this.setState({ message: error.message || error.error || error });
+		} finally {
+			this.setState({ busy: false });
+		}
+	}
+
+	handleStartReadLoopClick = async () => {
+		this.setState({ busy: true });
+		try {
+			await promisifyCall(Meteor.call, `startReadLoop`);
+			console.log('started read loop')
+		} catch (error) {
+			this.setState({ message: error.message || error.error || error });
+		} finally {
+			this.setState({ busy: false });
+		}
+	}
+
+	handleEndReadLoopClick = async () => {
+		this.setState({ busy: true });
+		try {
+			await promisifyCall(Meteor.call, `endReadLoop`);
+			console.log('ended read loop')
+		} catch (error) {
 			this.setState({ message: error.message || error.error || error });
 		} finally {
 			this.setState({ busy: false });
@@ -175,7 +207,6 @@ class PortComponent extends React.Component {
 		const { portName, ready, sensors } = this.props;
 		const { isScanning, message } = this.state;
 		if (!ready) { return (<div>Not ready</div>); }
-		console.log(sensors.fetch())
 		return (
 			<div>
 				<br/>
@@ -185,6 +216,8 @@ class PortComponent extends React.Component {
 				<button disabled={!isScanning} name="endScan" onClick={this.handleEndScanClick}>End scan</button>
 				<button onClick={this.handleRegisterSensorsClick}>Register Sensors</button>
 				<button onClick={this.handleReadCO2AllClick}>Read All CO2</button>
+				<button onClick={this.handleStartReadLoopClick}>Start Read Loop</button>
+				<button onClick={this.handleEndReadLoopClick}>End Read Loop</button>
 				<br/>
 				<input name="addresses" onChange={this.handleAddressesChange}/>
 				<br/>
@@ -201,7 +234,7 @@ class PortComponent extends React.Component {
 						</tr>
 					</thead>
 					<tbody>
-						{sensors.fetch().map((o, idx) => {
+						{sensors.map((o, idx) => {
 							return (<Sensor key={idx} {...o} />);
 						})}
 					</tbody>
