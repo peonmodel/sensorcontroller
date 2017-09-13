@@ -11,6 +11,16 @@ const CALIBRATION_ACK = 32;
 const RETRIAL_ATTEMPTS = 10;  // flush/drain each time
 const RESPONSE_TIMEOUT = 300;
 
+function stub(value) {
+	return function decorator(target, key, descriptor) {
+		// target = instance of the class
+		// key is the method name
+		descriptor.value = function() {
+			return value;
+		};
+	};
+}
+
 const Utils = {
 	removeLast2(buffer) {
 		return buffer.slice(0, buffer.length - 2);
@@ -37,7 +47,7 @@ const Utils = {
 	},
 	parseData(buffer) {
 		if (!buffer || buffer.length < 5) { return null; }
-		const parsed = (buffer[3] << 8) + buffer[4];
+		const parsed = Math.ceil(Math.random() * 100); // (buffer[3] << 8) + buffer[4];
 		return parsed;
 	}
 };
@@ -52,8 +62,8 @@ const PROTOCOLS = {
 		const	registerAddress = '0003';
 		const	registerQuantity = '0001';
 		let sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}`, 'hex');
-		const crc = Utils.calculateCRC(sequence);
-		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${crc}`, 'hex');
+		const checksum = Utils.calculateCRC(sequence);
+		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${checksum}`, 'hex');
 		return {
 			sequence,
 			isExpected: (response) => { return Utils.isValidCRC(response); },
@@ -65,8 +75,8 @@ const PROTOCOLS = {
 		const	registerAddress = '001f';
 		const	registerQuantity = value.toString(16);
 		let sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}`, 'hex');
-		const crc = Utils.calculateCRC(sequence);
-		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${crc}`, 'hex');
+		const checksum = Utils.calculateCRC(sequence);
+		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${checksum}`, 'hex');
 		return {
 			sequence,
 			isExpected: (response) => { return Utils.isEcho(response, sequence); },
@@ -78,8 +88,8 @@ const PROTOCOLS = {
 		const	registerAddress = '001f';
 		const	registerQuantity = '01';
 		let sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}`, 'hex');
-		const crc = Utils.calculateCRC(sequence);
-		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${crc}`, 'hex');
+		const checksum = Utils.calculateCRC(sequence);
+		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${checksum}`, 'hex');
 		return {
 			sequence,
 			isExpected: (response) => { return Utils.isValidCRC(response, sequence); },
@@ -91,8 +101,8 @@ const PROTOCOLS = {
 		const	registerAddress = '0000';
 		const	registerQuantity = '0000';
 		let sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}`, 'hex');
-		const crc = Utils.calculateCRC(sequence);
-		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${crc}`, 'hex');
+		const checksum = Utils.calculateCRC(sequence);
+		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${checksum}`, 'hex');
 		return {
 			sequence,
 			isExpected: (response) => { return Utils.isEcho(response, sequence); },
@@ -104,8 +114,8 @@ const PROTOCOLS = {
 		const	registerAddress = '0000';
 		const	registerQuantity = '0001';
 		let sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}`, 'hex');
-		const crc = Utils.calculateCRC(sequence);
-		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${crc}`, 'hex');
+		const checksum = Utils.calculateCRC(sequence);
+		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${checksum}`, 'hex');
 		return {
 			sequence,
 			isExpected: (response) => { return Utils.isValidCRC(response); },
@@ -124,6 +134,18 @@ const PROTOCOLS = {
 		// 	isExpected: (response) => { return Utils.isEcho(response, sequence); },
 		// };
 	},
+	generateReadZeroTrim(address) {
+
+	},
+	generateSetZeroTrim(address, value) {
+
+	},
+	generateSetZeroTrimEEPROM(address) {
+
+	},
+	generateSoftReset(address) {
+
+	},
 };
 // 105,106,107,108,109,110,111,112
 export class Sensor {
@@ -137,7 +159,7 @@ export class Sensor {
 
 	async changeAddress(newAddress) {
 		const { sequence, isExpected } = PROTOCOLS.generateChangeAddress(this.address, newAddress);
-		const { result, data } = await this.parent.send(sequence);
+		const { data } = await this.parent.send(sequence);
 		if (!isExpected(data)) { return null; }
 		console.log(`address change from ${this.address} to ${newAddress}`);
 		this.address = newAddress;
@@ -151,22 +173,52 @@ export class Sensor {
 			const { result, data } = await this.parent.send(sequence);
 			await this.parent.flush();
 			if (isExpected(data)) { return { result, data }; }
-		} while (attempts <= RETRIAL_ATTEMPTS);
+			attemptCount += 1;
+		} while (attemptCount <= limit);
 		return null;
 	}
 
-	async readCO2() {
+	// only read CO2
+	@stub({ result: 'success', data: new Buffer(`${'FE'}${'03'}${'0003'}${'e701'}${'AAAA'}`, 'hex') })
+	async _readCO2() {
 		const { sequence, isExpected } = PROTOCOLS.generateReadCO2(this.address);
-		const obj = await this.retrial(sequence, isExpected);
+		return this.retrial(sequence, isExpected);
+	}
+
+	// reads CO2 and record in collection
+	async readCO2() {
+		const obj = await this._readCO2();
+		console.log('read', obj)
 		if (!obj) {
 			Sensor.readingCollection.insertOne({ _id: Random.id(), portName: this.portName, address: this.address, value: null, timestamp: new Date() });
 			return null;
 		}
 		const { result, data } = obj;
 		const parsedData = Utils.parseData(data);
+		console.log(parsedData)
 		// no need to await the below promise
 		Sensor.readingCollection.insertOne({ _id: Random.id(), portName: this.portName, address: this.address, value: parsedData, timestamp: new Date() });
 		return { result, data, parsedData };
+	}
+
+	async readZeroTrim() {
+		const { sequence, isExpected } = PROTOCOLS.generateReadZeroTrim(this.address);
+		return this.retrial(sequence, isExpected);
+	}
+
+	async calibrateCO2(current = 400) {
+		let zeroTrim = await this.readZeroTrim();
+		let data = await this._readCO2();
+		let co2Value = Utils.parseData(data.data);
+		const retrialsLimit = 10;
+		let trialCount = 1;
+		while (trialCount > retrialsLimit) {
+			// formula to get trim value
+			// newTrim = fn(co2Value)
+			// this.setTrimValue(newTrim)
+			// read again
+			// if ok, store EEPROM and return
+		}
 	}
 
 	async readAcknowledgementRegister() {
@@ -180,9 +232,8 @@ export class Sensor {
 
 	async clearAcknowledgementRegister() {
 		const { sequence, isExpected } = PROTOCOLS.generateClearAcknowledgementRegister(this.address);
-		const { result, data } = await this.parent.send(sequence);
-		if (!isExpected(data)) { return null; }
-		return true;
+		const { data } = await this.parent.send(sequence);
+		return isExpected(data);
 	}
 
 	async calibrateBackground() {}
@@ -229,6 +280,7 @@ export class SensorPort {
 	awaitingResponse = false
 	busy = false
 	shouldScan = false
+	shouldReadLoop = false
 	sensors = []
 
 	get freeAddress() {
@@ -345,9 +397,9 @@ export class SensorPort {
 			this.unregisterCallback(callbackId);
 			return result;
 		});
-		
 	}
 
+	@stub({ result: 'success', data: new Buffer(`${'FE'}${'03'}${'0000'}${'0001'}${'AAAA'}`, 'hex') })
 	async ping(address) {
 		const { sequence, isExpected } = PROTOCOLS.generateReadCO2(address);
 		const { result, data } = await this.send(sequence);
@@ -385,13 +437,14 @@ export class SensorPort {
 		const array = [];
 		for (const address of addresses) {
 			const sensor = await this.registerSensor(address);
-			console.log('registerSensors', sensor)
-			array.push(sensor)
+			console.log('registerSensors', sensor && sensor.address || null);
+			array.push(sensor);
 		}
 		return array;
 	}
 
 	async readCO2All() {
+		console.log('readCO2All')
 		for (const sensor of this.sensors) {
 			await sensor.readCO2();
 		}
@@ -408,13 +461,13 @@ export class SensorPort {
 	async initialiseNewSensor(delay = 500) {
 		const { result } = this.registerSensor(DEFAULT_ADDRESS);
 		if (result !== 'success') { return { expired: true }; }
-		const newAddress = await this.changeAddress(this.freeAddress)
+		const newAddress = await this.changeAddress(this.freeAddress);
 		if (!newAddress) { return null; }
 		return newAddress;
 	}
 
 	// timeout 1 min from last successful detection
-	async startScan({limit = 1000, timeoutLimit = 1000*60*1} = {}) {
+	async startScan({limit = 1000, timeoutLimit = 1 * 60 * 1000} = {}) {
 		this.shouldScan = true;
 		let timer = null;
 		let timedOut = false;
@@ -425,7 +478,7 @@ export class SensorPort {
 			}, timeoutLimit);
 		};
 		resetCountdown();
-		while (this.shouldScan && limit --> 0 && !timedOut) {
+		while (this.shouldScan && limit-- > 0 && !timedOut) {
 			// there is a delay in initialiseNewSensor already
 			const attempt = await this.initialiseNewSensor();
 			if (!attempt) { resetCountdown(); }
@@ -442,10 +495,26 @@ export class SensorPort {
 		this.busy = true;
 		for (const sensor of this.sensors) {
 			const result = await sensor.changeAddress(DEFAULT_ADDRESS);
-			if (result) { sensor.remove  = true; }  // mark for remove
+			if (result) { sensor.remove = true; }  // mark for remove
 		}
 		this.sensors = this.sensors.filter(o => !o.remove);  // keep those that are not marked removed
 		await Sensor.collection.deleteMany({ address: DEFAULT_ADDRESS });
 		this.busy = false;
+	}
+
+	// it takes 2 seconds for new readings
+	async startReadLoop({ interval = 5000 } = {}) {
+		this.shouldReadLoop = true;
+		console.log('startReadLoop')
+		while (this.shouldReadLoop) {
+			await this.readCO2All();
+			await this.wait(interval);
+			console.log('reading loop')
+		}
+		return { manualEnd: true };
+	}
+
+	endReadLoop() {
+		this.shouldReadLoop = false;
 	}
 }
