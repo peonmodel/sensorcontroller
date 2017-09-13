@@ -24,6 +24,6 @@ export default function reactify(reactiveMapper) {
 		const reactiveComponent = compose(getTrackerLoader(reactiveMapper))(component);
 		return function(...params) {
 			return new reactiveComponent(...params);
-		}
-	}
+		};
+	};
 }
