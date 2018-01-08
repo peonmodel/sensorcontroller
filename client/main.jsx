@@ -19,7 +19,7 @@ moment.relativeTimeThreshold('s', 60);
 function sensorMapper(props, onData) {
 	const activeSub = Meteor.subscribe('sensors');
 	if (activeSub.ready()) {
-		console.log('sub ready')
+		console.log('sensors props', props);
 		onData(null, {
 			ready: true,
 			sensors: Sensors.find({ portName: props.portName }).fetch(),
@@ -30,6 +30,7 @@ function sensorMapper(props, onData) {
 }
 
 function readingMapper(props, onData) {
+	console.log('readings props', props);
 	onData(null, {
 		ready: true,
 		readings: Readings.find({ address: props.address }, { sort: { timestamp: -1 } }).fetch(),
@@ -95,6 +96,7 @@ class Sensor extends React.Component {
 	}
 
 	render() {
+		console.log('readings props2', this.props);
 		const { address, readings } = this.props;
 		const { value, busy, message } = this.state;
 		// const readings = Readings.find({ address }, { sort: { timestamp: -1 } });
@@ -187,7 +189,7 @@ class PortComponent extends React.Component {
 		this.setState({ busy: true });
 		try {
 			await promisifyCall(Meteor.call, `endReadLoop`);
-			console.log('ended read loop')
+			console.log('ended read loop');
 		} catch (error) {
 			this.setState({ message: error.message || error.error || error });
 		} finally {
@@ -205,6 +207,7 @@ class PortComponent extends React.Component {
 
 	render() {
 		const { portName, ready, sensors } = this.props;
+		console.log('sensors props2', this.props);
 		const { isScanning, message } = this.state;
 		if (!ready) { return (<div>Not ready</div>); }
 		return (
@@ -269,6 +272,7 @@ class App extends React.Component {
 		this.setState({ busy: true, message: '' });
 		try {
 			const result = await promisifyCall(Meteor.call, `openPort`, this.state.selectedPort);
+			console.log('result handleOpenPortClick', result);
 			this.setState({
 				isPortOpen: true,
 				message: `port ${this.state.selectedPort} opened`
@@ -316,6 +320,7 @@ class App extends React.Component {
 		const { availablePorts, selectedPort, message, busy } = this.state;
 		return (
 			<div className="container">
+				<span>105,106,107,108,109,111,112</span>
 				<span>Busy: {busy.toString()}</span> <span>{message}</span>
 				<br/>
 				<button disabled={busy} className="listport" onClick={this.handleListPortClick}>List ports</button>
