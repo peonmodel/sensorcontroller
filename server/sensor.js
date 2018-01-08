@@ -11,15 +11,19 @@ const CALIBRATION_ACK = 32;
 const RETRIAL_ATTEMPTS = 10;  // flush/drain each time
 const RESPONSE_TIMEOUT = 300;
 
-function stub(value) {
-	return function decorator(target, key, descriptor) {
-		// target = instance of the class
-		// key is the method name
-		descriptor.value = function() {
-			return value;
-		};
-	};
-}
+// function stub(value) {
+// 	return function decorator(target, key, descriptor) {
+// 		// target = instance of the class
+// 		// key is the method name
+// 		if (typeof value === 'function') {
+// 			descriptor.value = value;
+// 		} else {
+// 			descriptor.value = function() {
+// 				return value;
+// 			};
+// 		}
+// 	};
+// }
 
 const Utils = {
 	removeLast2(buffer) {
@@ -47,14 +51,50 @@ const Utils = {
 	},
 	parseData(buffer) {
 		if (!buffer || buffer.length < 5) { return null; }
-		const parsed = Math.ceil(Math.random() * 100); // (buffer[3] << 8) + buffer[4];
+		const parsed = (buffer[3] << 8) + buffer[4];
 		return parsed;
 	}
 };
 
 const PROTOCOLS = {
 	generateChangeAddress(address, value) {
-
+		const sensorAddress = address.toString(16);
+		const fnCode = '41';  // ???
+		const	registerAddress = '000001';
+		const	registerQuantity = value.toString(16);
+		let sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}`, 'hex');
+		const checksum = Utils.calculateCRC(sequence);
+		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${checksum}`, 'hex');
+		return {
+			sequence,
+			isExpected: (response) => { return Utils.isEcho(response, new Buffer(`FE4181E0`, 'hex')); },
+		};
+	},
+	generateSaveAddress(address) {
+		const sensorAddress = address.toString(16);
+		const fnCode = '41';  // ???
+		const	registerAddress = '0060';
+		const	registerQuantity = '0102';
+		let sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}`, 'hex');
+		const checksum = Utils.calculateCRC(sequence);
+		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${checksum}`, 'hex');
+		return {
+			sequence,
+			isExpected: (response) => { return Utils.isEcho(response, new Buffer(`FE4181E0`, 'hex')); },
+		};
+	},
+	generateRestartSensor(address) {
+		const sensorAddress = address.toString(16);
+		const fnCode = '41';  // ???
+		const	registerAddress = '0060';
+		const	registerQuantity = '01FF';
+		let sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}`, 'hex');
+		const checksum = Utils.calculateCRC(sequence);
+		sequence = new Buffer(`${sensorAddress}${fnCode}${registerAddress}${registerQuantity}${checksum}`, 'hex');
+		return {
+			sequence,
+			isExpected: (response) => { return Utils.isEcho(response, new Buffer(`FE4181E0`, 'hex')); },
+		};
 	},
 	generateReadCO2(address) {
 		const sensorAddress = address.toString(16);
@@ -157,14 +197,32 @@ export class Sensor {
 
 	parent = null
 
-	async changeAddress(newAddress) {
+	async _changeAddress(newAddress) {
 		const { sequence, isExpected } = PROTOCOLS.generateChangeAddress(this.address, newAddress);
-		const { data } = await this.parent.send(sequence);
-		if (!isExpected(data)) { return null; }
-		console.log(`address change from ${this.address} to ${newAddress}`);
+		return this.retrial(sequence, isExpected);
+	}
+
+	async _saveAddress() {
+		const { sequence, isExpected } = PROTOCOLS.generateSaveAddress(this.address);
+		return this.retrial(sequence, isExpected);
+	}
+
+	async _restartSensor() {
+		const { sequence, isExpected } = PROTOCOLS.generateRestartSensor(this.address);
+		return this.retrial(sequence, isExpected);
+	}
+
+	async changeAddress(newAddress) {
+		console.log('changing', this.address, newAddress);
+		const res1 = await this._changeAddress(newAddress);
+		console.log('res1', res1);
+		const res2 = await this._saveAddress();
+		console.log('res2', res2);
+		const res3 = await this._restartSensor();
+		console.log('res3', res3);
 		this.address = newAddress;
-		await Sensor.collection.updateOne(this._id, { $set: { address: newAddress } });
-		return newAddress;
+		await Sensor.collection.updateOne({ _id: this._id }, { $set: { address: newAddress } });
+		console.log(`address changed ${this.address}`);
 	}
 
 	async retrial(sequence, isExpected, limit = RETRIAL_ATTEMPTS) {
@@ -172,14 +230,14 @@ export class Sensor {
 		do {
 			const { result, data } = await this.parent.send(sequence);
 			await this.parent.flush();
+			console.log('response', data)
 			if (isExpected(data)) { return { result, data }; }
 			attemptCount += 1;
 		} while (attemptCount <= limit);
 		return null;
 	}
-
 	// only read CO2
-	@stub({ result: 'success', data: new Buffer(`${'FE'}${'03'}${'0003'}${'e701'}${'AAAA'}`, 'hex') })
+	// @stub(() => { const value = Math.ceil(Math.random() * 256); return { result: 'success', data: new Buffer(`${'FE0300'}${value.toString(16)}${'01AAAA'}`, 'hex') }; })
 	async _readCO2() {
 		const { sequence, isExpected } = PROTOCOLS.generateReadCO2(this.address);
 		return this.retrial(sequence, isExpected);
@@ -187,15 +245,14 @@ export class Sensor {
 
 	// reads CO2 and record in collection
 	async readCO2() {
-		const obj = await this._readCO2();
-		console.log('read', obj)
+		const obj = await this._readCO2();  // { result: 'success', data: new Buffer() }
 		if (!obj) {
 			Sensor.readingCollection.insertOne({ _id: Random.id(), portName: this.portName, address: this.address, value: null, timestamp: new Date() });
 			return null;
 		}
 		const { result, data } = obj;
 		const parsedData = Utils.parseData(data);
-		console.log(parsedData)
+		console.log('read', parsedData);
 		// no need to await the below promise
 		Sensor.readingCollection.insertOne({ _id: Random.id(), portName: this.portName, address: this.address, value: parsedData, timestamp: new Date() });
 		return { result, data, parsedData };
@@ -261,7 +318,7 @@ export class SensorPort {
 		});
 		this.port.on('data', (data) => {
 			this.awaitingResponse = false;
-			_.each(this.responseCallbacks, fn => {
+			lodash.each(this.responseCallbacks, fn => {
 				if (typeof fn === 'function') { fn(undefined, data); }
 			});
 			this.responseCallbacks = {};
@@ -269,7 +326,7 @@ export class SensorPort {
 		this.port.on('error', (error) => {
 			this.awaitingResponse = false;
 			console.log('port error', error);
-			_.each(this.responseCallbacks, fn => {
+			lodash.each(this.responseCallbacks, fn => {
 				if (typeof fn === 'function') { fn(error, undefined); }
 			});
 			this.responseCallbacks = {};
@@ -287,7 +344,7 @@ export class SensorPort {
 		for (let ii = DEFAULT_ADDRESS + 1; ii < 254; ++ii) {
 			if (!this.sensors.find(o => o.address === ii)) { return ii; }
 		}
-		console.warn('ran out of free address (105 - 253)')
+		console.warn('ran out of free address (105 - 253)');
 		return 0;
 	}
 
@@ -399,7 +456,7 @@ export class SensorPort {
 		});
 	}
 
-	@stub({ result: 'success', data: new Buffer(`${'FE'}${'03'}${'0000'}${'0001'}${'AAAA'}`, 'hex') })
+	// @stub(() => { const value = Math.ceil(Math.random() * 256); return { result: 'success', data: new Buffer(`${'FE0300'}${value.toString(16)}${'01AAAA'}`, 'hex') }; })
 	async ping(address) {
 		const { sequence, isExpected } = PROTOCOLS.generateReadCO2(address);
 		const { result, data } = await this.send(sequence);
@@ -437,14 +494,14 @@ export class SensorPort {
 		const array = [];
 		for (const address of addresses) {
 			const sensor = await this.registerSensor(address);
-			console.log('registerSensors', sensor && sensor.address || null);
+			// console.log('registerSensors', sensor && sensor.address || null);
 			array.push(sensor);
 		}
 		return array;
 	}
 
 	async readCO2All() {
-		console.log('readCO2All')
+		// console.log('readCO2All');
 		for (const sensor of this.sensors) {
 			await sensor.readCO2();
 		}
@@ -454,7 +511,7 @@ export class SensorPort {
 	static async pingRange(range = []) {
 		for (const address of range) {
 			const response = await this.ping(address);
-			console.log('pingRange', response);
+			// console.log('pingRange', response);
 		}
 	}
 
@@ -503,13 +560,13 @@ export class SensorPort {
 	}
 
 	// it takes 2 seconds for new readings
-	async startReadLoop({ interval = 5000 } = {}) {
+	async startReadLoop({ interval = 2000 } = {}) {
 		this.shouldReadLoop = true;
-		console.log('startReadLoop')
+		console.log('startReadLoop');
 		while (this.shouldReadLoop) {
 			await this.readCO2All();
 			await this.wait(interval);
-			console.log('reading loop')
+			console.log('reading loop');
 		}
 		return { manualEnd: true };
 	}
